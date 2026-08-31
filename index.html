@@ -724,13 +724,20 @@ function handleCellClick(day, period, room, entry) {
 
     const firstEntry = baseEntryAtEffective(pendingSwap.day, pendingSwap.period, pendingSwap.room);
     const secondEntry = entry;
+    const swapTarget = { day, period, room };
+    const swapSource = { day: pendingSwap.day, period: pendingSwap.period, room: pendingSwap.room };
     showModal({
-      message: `다음 두 교시를 교환할까요?\n\n① ${slotDescription(pendingSwap.day, pendingSwap.period, pendingSwap.room, firstEntry)}\n② ${slotDescription(day, period, room, secondEntry)}`,
+      message: `다음 두 교시를 교환할까요?\n\n① ${slotDescription(swapSource.day, swapSource.period, swapSource.room, firstEntry)}\n② ${slotDescription(swapTarget.day, swapTarget.period, swapTarget.room, secondEntry)}`,
       onOk: () => {
-        week.swaps = week.swaps || [];
-        week.swaps.push({
-          dayA: pendingSwap.day, periodA: pendingSwap.period, roomA: pendingSwap.room,
-          dayB: day, periodB: period, roomB: room,
+        // 확인을 누르는 시점에 최신 데이터를 다시 가져와야 함 —
+        // 확인창이 떠 있는 동안 실시간 동기화로 weeks가 새 데이터로 교체될 수 있어,
+        // 모달을 열기 전에 미리 붙잡아둔 week 참조를 그대로 쓰면 저장이 유실될 수 있음
+        const freshWeek = currentWeek();
+        if (!freshWeek) return;
+        freshWeek.swaps = freshWeek.swaps || [];
+        freshWeek.swaps.push({
+          dayA: swapSource.day, periodA: swapSource.period, roomA: swapSource.room,
+          dayB: swapTarget.day, periodB: swapTarget.period, roomB: swapTarget.room,
         });
         saveData();
         pendingSwap = null;
