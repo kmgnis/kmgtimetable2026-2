@@ -423,6 +423,25 @@ function slotDescription(day, period, room, entry) {
 /* ---------------------------------------------------------
    모달 커스텀 UI
 --------------------------------------------------------- */
+const ADMIN_PASSWORD = "1234";
+
+function askAdminPassword(errorMsg) {
+  showModal({
+    message: (errorMsg ? errorMsg + "\n\n" : "") +
+      "관리자 모드를 켜면 여기서 수정한 내용이 클라우드에 저장되어 이 화면을 보는 모든 선생님께 즉시 반영됩니다.\n관리자 비밀번호를 입력하세요.",
+    withInput: true,
+    inputType: "password",
+    onOk: (val) => {
+      if (val === ADMIN_PASSWORD) {
+        adminMode = true;
+        renderAll();
+      } else {
+        askAdminPassword("⚠️ 비밀번호가 올바르지 않습니다. 다시 입력해주세요.");
+      }
+    }
+  });
+}
+
 function closeModal() {
   document.getElementById("modalOverlay").classList.remove("show");
 }
@@ -443,10 +462,10 @@ function openModal(bodyHtml, actions) {
   return overlay;
 }
 
-function showModal({ message, withInput = false, defaultValue = "", onOk }) {
+function showModal({ message, withInput = false, defaultValue = "", inputType = "text", onOk }) {
   const bodyHtml = `
     <div class="modal-msg">${escapeHtml(message)}</div>
-    ${withInput ? `<input class="modal-input" id="modalPromptInput" value="${escapeHtml(defaultValue)}" />` : ""}
+    ${withInput ? `<input class="modal-input" id="modalPromptInput" type="${inputType}" value="${escapeHtml(defaultValue)}" />` : ""}
   `;
   openModal(bodyHtml, [
     { label: "취소" },
@@ -456,7 +475,18 @@ function showModal({ message, withInput = false, defaultValue = "", onOk }) {
       }
     },
   ]);
-  if (withInput) setTimeout(() => { const el = document.getElementById("modalPromptInput"); if (el) el.focus(); }, 0);
+  if (withInput) {
+    setTimeout(() => {
+      const el = document.getElementById("modalPromptInput");
+      if (el) {
+        el.focus();
+        // 입력창에서 Enter를 누르면 바로 확인 처리
+        el.addEventListener("keydown", (e) => {
+          if (e.key === "Enter") document.getElementById("modalActions").lastChild.click();
+        });
+      }
+    }, 0);
+  }
 }
 
 function showChoiceModal(title, choices) {
@@ -901,10 +931,7 @@ document.getElementById("clearSearch").onclick = () => {
 document.getElementById("pendingCancelBtn").onclick = () => { pendingSwap = null; renderAll(); };
 document.getElementById("adminToggle").onclick = () => {
   if (!adminMode) {
-    showModal({
-      message: "관리자 모드를 켜면 여기서 수정한 내용이 클라우드에 저장되어 이 화면을 보는 모든 선생님께 즉시 반영됩니다. 계속할까요?",
-      onOk: () => { adminMode = true; renderAll(); }
-    });
+    askAdminPassword();
     return;
   }
   adminMode = false;
