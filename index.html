@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>2026학년도 2학기 주간시간표 (수업 교환 관리)</title>
 
+<!-- Firebase SDK 추가 -->
 <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-database-compat.js"></script>
 
@@ -54,7 +55,6 @@
     font-size: 11.5px; color: var(--muted-2); margin: 6px 0 18px; padding: 6px 10px;
     background: var(--panel); border: 1px solid var(--border); border-radius: 8px; display: inline-block;
   }
-  .storage-status.cloud { color: #1F7A54; background: #E8F5E9; border-color: #C8E6C9; }
   .storage-status.warn { color: #8A5A1E; background: #FBF1DF; border-color: #EBD7A8; }
 
   .segment { display: inline-flex; background: #E6E2D6; border-radius: 10px; padding: 3px; margin-bottom: 16px; }
@@ -113,7 +113,7 @@
   .class-tag { color: #fff; font-size: 12.5px; font-weight: 700; border-radius: 6px; padding: 4px 0; margin-bottom: 3px; }
   .class-sub { font-size: 10.5px; color: var(--muted-2); font-weight: 600; }
 
-  .cell-editable { cursor: pointer; user-select: none; }
+  .cell-editable { cursor: pointer; user-select: none; -webkit-user-select: none; -moz-user-select: none; }
   .cell-editable:hover { outline: 2px solid var(--accent); outline-offset: -2px; }
   .cell-selected { outline: 2px solid var(--accent); outline-offset: -2px; background: var(--accent-soft) !important; }
   .badge-swap {
@@ -149,6 +149,21 @@
     color: var(--ink-soft);
   }
   .modal-btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .modal-title { font-size: 15px; font-weight: 800; color: var(--ink); margin-bottom: 10px; }
+  .modal-choice-list { display: flex; flex-direction: column; gap: 6px; max-height: 280px; overflow-y: auto; margin-bottom: 4px; }
+  .modal-choice-btn {
+    text-align: left; font-family: inherit; font-size: 13.5px; font-weight: 600; color: var(--ink-soft);
+    background: var(--panel-alt); border: 1px solid var(--border); border-radius: 8px; padding: 9px 12px; cursor: pointer;
+  }
+  .modal-choice-btn:hover { border-color: var(--accent); }
+  .action-card {
+    display: block; width: 100%; text-align: left; font-family: inherit; background: var(--panel-alt);
+    border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; margin-bottom: 8px; cursor: pointer;
+  }
+  .action-card:hover { border-color: var(--accent); }
+  .action-card-title { font-size: 14px; font-weight: 700; color: var(--ink); margin-bottom: 2px; }
+  .action-card-desc { font-size: 12px; color: var(--muted-2); }
+  .badge-sub { background: #2C5C8A !important; }
 </style>
 </head>
 <body>
@@ -165,9 +180,9 @@
       <span id="metaLabel"></span>
       <span class="dot"></span>
       <span id="metaCount"></span>
-      <span id="metaSwapTag" style="display:none" class="meta-tag">수업 교환 반영됨</span>
+      <span id="metaSwapTag" style="display:none" class="meta-tag">교환·결보강 반영됨</span>
     </div>
-    <div id="storageStatus" class="storage-status">저장소 연결 중…</div>
+    <div id="storageStatus" class="storage-status">저장소 확인 중…</div>
 
     <div class="segment">
       <button id="btnTeacher" class="active">교사별 보기</button>
@@ -219,18 +234,15 @@
 
 <div class="modal-overlay" id="modalOverlay">
   <div class="modal-box">
-    <div class="modal-msg" id="modalMsg"></div>
-    <input class="modal-input" id="modalInput" style="display:none;" />
-    <div class="modal-actions">
-      <button class="modal-btn" id="modalCancelBtn">취소</button>
-      <button class="modal-btn primary" id="modalOkBtn">확인</button>
-    </div>
+    <div id="modalBody"></div>
+    <div class="modal-actions" id="modalActions"></div>
   </div>
 </div>
 
 <script>
 /* ---------------------------------------------------------
-   1. FIREBASE CONFIGURATION (선생님의 설정값으로 변경해주세요)
+   Firebase 연동 설정
+   (아래 쌍따옴표 안의 내용을 본인의 Firebase 설정값으로 변경하세요)
 --------------------------------------------------------- */
 const firebaseConfig = {
   apiKey: "AIzaSyATfjjHtskA5HMQg2u3s6SePDrWP_BmN-Q",
@@ -242,21 +254,19 @@ const firebaseConfig = {
   appId: "1:336574724434:web:b3782488dd1dba7b41628b"
 };
 
-let dbRef = null;
-let isFirebaseConnected = false;
-
+// Firebase 초기화
+let db = null;
 try {
-  if (firebaseConfig.apiKey !== "YOUR_API_KEY") {
+  if (firebaseConfig.apiKey && firebaseConfig.apiKey !== "여기에_API_KEY") {
     firebase.initializeApp(firebaseConfig);
-    dbRef = firebase.database().ref("timetable_weeks");
-    isFirebaseConnected = true;
+    db = firebase.database();
   }
 } catch (e) {
-  console.error("Firebase 연결 실패:", e);
+  console.error("Firebase 초기화 에러:", e);
 }
 
 /* ---------------------------------------------------------
-   Source data
+   기본 데이터 — 2026학년도 2학기 주간시간표
 --------------------------------------------------------- */
 const TEACHERS = ["박창후","윤권영","박재우","홍순화","경규상","윤종현","이주영","박미선","박상현","박효경","김지성","안성준","박새롬","원수빈","노선이","김혜진","김미란","김병석","조전식"];
 
@@ -289,71 +299,78 @@ ROWS.forEach(([day, period, teacherIdx, room, subject]) => {
 });
 
 /* ---------------------------------------------------------
-   State & Storage
+   앱 상태 관리
 --------------------------------------------------------- */
-const LOCAL_STORAGE_KEY = "hs_timetable_weeks_v1";
-let weeks = [];
-let selectedWeekId = null;
+const STORAGE_KEY = "hs_timetable_weeks_v1";
+
+let weeks = [];             // [{id, label, swaps:[...], subs:[...]}]
+let selectedWeekId = null;  // null = 기본 시간표
 let mode = "teacher";
 let selectedTeacher = TEACHERS[0];
 let selectedRoom = ROOMS[0];
 let query = "";
 let adminMode = false;
-let pendingSwap = null;
+let pendingSwap = null;     // {day, period, room}
 
 const dayMap = ["일","월","화","수","목","금","토"];
 const today = dayMap[new Date().getDay()];
 
+/* ---------------------------------------------------------
+   데이터 동기화 (Firebase Realtime Database)
+--------------------------------------------------------- */
 function setStorageStatus(kind) {
   const el = document.getElementById("storageStatus");
-  el.classList.remove("warn", "cloud");
+  el.classList.remove("warn");
   if (kind === "cloud") {
-    el.textContent = "🔗 실시간 DB 연동됨 (수정 시 모든 선생님 화면에 즉시 반영됩니다)";
-    el.classList.add("cloud");
+    el.textContent = "🔗 클라우드 공유 저장소 연결 완료 (실시간 자동 동기화 적용됨)";
+  } else if (kind === "local") {
+    el.textContent = "⚠️ Firebase 키 미설정: 브라우저에만 저장됩니다 (다른 사람 화면에 안 보임)";
+    el.classList.add("warn");
   } else {
-    el.textContent = "⚠️ Firebase 미설정 상태 (현재 브라우저에만 저장되며 다른 사람과 공유되지 않음)";
+    el.textContent = "⚠️ 저장소 오류가 발생했습니다.";
     el.classList.add("warn");
   }
 }
 
-function initStorage() {
-  if (isFirebaseConnected && dbRef) {
+function initDataSync() {
+  if (db) {
     setStorageStatus("cloud");
-    // Firebase 실시간 리스너: 서버 데이터 변경 시 접속 중인 모든 사용자 화면 자동 업데이트
-    dbRef.on("value", (snapshot) => {
+    // 데이터 변경 실시간 감지
+    db.ref("timetable_weeks").on("value", (snapshot) => {
       const data = snapshot.val();
       weeks = data ? data : [];
       renderAll();
     });
   } else {
-    setStorageStatus("local");
     try {
-      const raw = localStorage.getItem(LOCAL_STORAGE_KEY);
+      const raw = localStorage.getItem(STORAGE_KEY);
       weeks = raw ? JSON.parse(raw) : [];
+      setStorageStatus("local");
     } catch (e) {
       weeks = [];
+      setStorageStatus("none");
     }
     renderAll();
   }
 }
 
-async function saveWeeks() {
-  if (isFirebaseConnected && dbRef) {
+function saveData() {
+  if (db) {
+    db.ref("timetable_weeks").set(weeks).catch((err) => {
+      console.error("Firebase 저장 실패:", err);
+      alert("데이터 저장 실패: " + err.message);
+    });
+  } else {
     try {
-      await dbRef.set(weeks);
-      return;
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(weeks));
     } catch (e) {
-      console.error("Firebase 저장 실패:", e);
+      console.error(e);
     }
   }
-  try {
-    localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(weeks));
-  } catch (e) {}
-  renderAll();
 }
 
 /* ---------------------------------------------------------
-   Swap logic & UI Renders
+   시간표 변경 및 계산 로직
 --------------------------------------------------------- */
 function currentWeek() {
   return weeks.find(w => w.id === selectedWeekId) || null;
@@ -362,9 +379,10 @@ function currentWeek() {
 function buildEffective() {
   const map = new Map(baseMap);
   const changed = new Set();
+  const subbed = new Set();
   const week = currentWeek();
-  if (week && week.swaps) {
-    week.swaps.forEach(sw => {
+  if (week) {
+    (week.swaps || []).forEach(sw => {
       const keyA = `${sw.dayA}|${sw.periodA}|${sw.roomA}`;
       const keyB = `${sw.dayB}|${sw.periodB}|${sw.roomB}`;
       const valA = map.has(keyA) ? map.get(keyA) : null;
@@ -374,8 +392,16 @@ function buildEffective() {
       changed.add(keyA);
       changed.add(keyB);
     });
+    (week.subs || []).forEach(su => {
+      const key = `${su.day}|${su.period}|${su.room}`;
+      const cur = map.get(key);
+      if (cur) {
+        map.set(key, { teacherIdx: su.teacherIdx, subject: cur.subject });
+        subbed.add(key);
+      }
+    });
   }
-  return { map, changed };
+  return { map, changed, subbed };
 }
 
 function findTeacherEntry(effMap, day, period, teacherIdx) {
@@ -394,25 +420,82 @@ function slotDescription(day, period, room, entry) {
   return `${base} — ${entry.subject} · ${TEACHERS[entry.teacherIdx]}`;
 }
 
-function showModal({ message, withInput = false, defaultValue = "", onOk }) {
-  const overlay = document.getElementById("modalOverlay");
-  const msgEl = document.getElementById("modalMsg");
-  const input = document.getElementById("modalInput");
-  const okBtn = document.getElementById("modalOkBtn");
-  const cancelBtn = document.getElementById("modalCancelBtn");
-
-  msgEl.textContent = message;
-  input.style.display = withInput ? "" : "none";
-  input.value = defaultValue;
-
-  const close = () => { overlay.classList.remove("show"); okBtn.onclick = null; cancelBtn.onclick = null; };
-  okBtn.onclick = () => { const val = withInput ? input.value : true; close(); if (val) onOk(val); };
-  cancelBtn.onclick = () => { close(); };
-
-  overlay.classList.add("show");
-  if (withInput) setTimeout(() => input.focus(), 0);
+/* ---------------------------------------------------------
+   모달 커스텀 UI
+--------------------------------------------------------- */
+function closeModal() {
+  document.getElementById("modalOverlay").classList.remove("show");
 }
 
+function openModal(bodyHtml, actions) {
+  const overlay = document.getElementById("modalOverlay");
+  document.getElementById("modalBody").innerHTML = bodyHtml;
+  const actionsEl = document.getElementById("modalActions");
+  actionsEl.innerHTML = "";
+  actions.forEach(a => {
+    const btn = document.createElement("button");
+    btn.className = "modal-btn" + (a.primary ? " primary" : "");
+    btn.textContent = a.label;
+    btn.onclick = () => { closeModal(); if (a.onClick) a.onClick(); };
+    actionsEl.appendChild(btn);
+  });
+  overlay.classList.add("show");
+  return overlay;
+}
+
+function showModal({ message, withInput = false, defaultValue = "", onOk }) {
+  const bodyHtml = `
+    <div class="modal-msg">${escapeHtml(message)}</div>
+    ${withInput ? `<input class="modal-input" id="modalPromptInput" value="${escapeHtml(defaultValue)}" />` : ""}
+  `;
+  openModal(bodyHtml, [
+    { label: "취소" },
+    { label: "확인", primary: true, onClick: () => {
+        const val = withInput ? document.getElementById("modalPromptInput").value : true;
+        if (val) onOk(val);
+      }
+    },
+  ]);
+  if (withInput) setTimeout(() => { const el = document.getElementById("modalPromptInput"); if (el) el.focus(); }, 0);
+}
+
+function showChoiceModal(title, choices) {
+  const bodyHtml = `
+    <div class="modal-title">${escapeHtml(title)}</div>
+    ${choices.map((c, i) => `
+      <button class="action-card" data-choice="${i}">
+        <div class="action-card-title">${escapeHtml(c.label)}</div>
+        ${c.desc ? `<div class="action-card-desc">${escapeHtml(c.desc)}</div>` : ""}
+      </button>
+    `).join("")}
+  `;
+  const overlay = openModal(bodyHtml, [{ label: "취소" }]);
+  choices.forEach((c, i) => {
+    const btn = overlay.querySelector(`[data-choice="${i}"]`);
+    if (btn) btn.onclick = () => { closeModal(); if (c.onClick) c.onClick(); };
+  });
+}
+
+function showTeacherPickModal(title, excludeIdx, onPick) {
+  const bodyHtml = `
+    <div class="modal-title">${escapeHtml(title)}</div>
+    <div class="modal-choice-list" id="teacherPickList"></div>
+  `;
+  const overlay = openModal(bodyHtml, [{ label: "취소" }]);
+  const list = overlay.querySelector("#teacherPickList");
+  TEACHERS.forEach((name, idx) => {
+    if (idx === excludeIdx) return;
+    const btn = document.createElement("button");
+    btn.className = "modal-choice-btn";
+    btn.textContent = name;
+    btn.onclick = () => { closeModal(); onPick(idx); };
+    list.appendChild(btn);
+  });
+}
+
+/* ---------------------------------------------------------
+   UI 렌더링 함수
+--------------------------------------------------------- */
 function renderWeekChips() {
   const container = document.getElementById("weekChips");
   container.innerHTML = "";
@@ -435,7 +518,8 @@ function renderWeekChips() {
           onOk: () => {
             weeks = weeks.filter(x => x.id !== w.id);
             if (selectedWeekId === w.id) selectedWeekId = null;
-            saveWeeks();
+            saveData();
+            renderAll();
           }
         });
         return;
@@ -457,10 +541,11 @@ function renderWeekChips() {
         withInput: true,
         onOk: (label) => {
           if (label && label.trim()) {
-            const w = { id: "w" + Date.now(), label: label.trim(), swaps: [] };
+            const w = { id: "w" + Date.now(), label: label.trim(), swaps: [], subs: [] };
             weeks.push(w);
             selectedWeekId = w.id;
-            saveWeeks();
+            saveData();
+            renderAll();
           }
         }
       });
@@ -480,10 +565,12 @@ function renderSwapPanel() {
   list.innerHTML = "";
 
   const swaps = week.swaps || [];
-  if (swaps.length === 0) {
+  const subs = week.subs || [];
+
+  if (swaps.length === 0 && subs.length === 0) {
     const div = document.createElement("div");
     div.className = "swap-empty";
-    div.textContent = "이번 주는 아직 등록된 교환이 없습니다.";
+    div.textContent = "이번 주는 아직 등록된 교환·결보강이 없습니다.";
     list.appendChild(div);
   } else {
     swaps.forEach((sw, idx) => {
@@ -493,7 +580,7 @@ function renderSwapPanel() {
       item.className = "swap-item";
       item.innerHTML = `
         <div>
-          <div>${roomLabel(sw.roomA)} ${DAY_FULL[sw.dayA]} ${sw.periodA}교시 ↔ ${roomLabel(sw.roomB)} ${DAY_FULL[sw.dayB]} ${sw.periodB}교시</div>
+          <div>🔁 ${roomLabel(sw.roomA)} ${DAY_FULL[sw.dayA]} ${sw.periodA}교시 ↔ ${roomLabel(sw.roomB)} ${DAY_FULL[sw.dayB]} ${sw.periodB}교시</div>
           <div class="orig">원래: ${a ? (a.subject === "창체" ? a.subject : a.subject + "·" + TEACHERS[a.teacherIdx]) : "빈 시간"} ↔ ${b ? (b.subject === "창체" ? b.subject : b.subject + "·" + TEACHERS[b.teacherIdx]) : "빈 시간"}</div>
         </div>
       `;
@@ -503,7 +590,32 @@ function renderSwapPanel() {
         delBtn.textContent = "✕";
         delBtn.onclick = () => {
           week.swaps.splice(idx, 1);
-          saveWeeks();
+          saveData();
+          renderAll();
+        };
+        item.appendChild(delBtn);
+      }
+      list.appendChild(item);
+    });
+
+    subs.forEach((su, idx) => {
+      const orig = baseMap.get(`${su.day}|${su.period}|${su.room}`);
+      const item = document.createElement("div");
+      item.className = "swap-item";
+      item.innerHTML = `
+        <div>
+          <div>🩹 ${roomLabel(su.room)} ${DAY_FULL[su.day]} ${su.period}교시 결보강 — ${TEACHERS[su.teacherIdx]}</div>
+          <div class="orig">원래 담당: ${orig ? TEACHERS[orig.teacherIdx] : "-"} (${orig ? orig.subject : "-"} 과목 유지)</div>
+        </div>
+      `;
+      if (adminMode) {
+        const delBtn = document.createElement("button");
+        delBtn.className = "swap-del-btn";
+        delBtn.textContent = "✕";
+        delBtn.onclick = () => {
+          week.subs.splice(idx, 1);
+          saveData();
+          renderAll();
         };
         item.appendChild(delBtn);
       }
@@ -514,8 +626,8 @@ function renderSwapPanel() {
   if (adminMode) {
     hint.style.display = "";
     hint.textContent = mode === "class"
-      ? "학급별 보기에서 바꾸고 싶은 두 교시를 차례로 클릭하면 교환이 등록됩니다."
-      : "수업 교환 편집은 학급별 보기에서만 가능합니다.";
+      ? "학급별 보기에서 수업이 있는 칸을 클릭하면 교환·결보강을 등록할 수 있습니다."
+      : "수업 교환·결보강 편집은 학급별 보기에서만 가능합니다.";
   } else {
     hint.style.display = "none";
   }
@@ -571,35 +683,64 @@ function renderClassChips() {
 }
 
 function handleCellClick(day, period, room, entry) {
-  if (!pendingSwap) {
-    pendingSwap = { day, period, room };
-    renderAll();
-    return;
-  }
-  if (pendingSwap.day === day && pendingSwap.period === period && pendingSwap.room === room) {
+  if (pendingSwap) {
+    if (pendingSwap.day === day && pendingSwap.period === period && pendingSwap.room === room) {
+      pendingSwap = null;
+      renderAll();
+      return;
+    }
+    const week = currentWeek();
+    if (!week) { pendingSwap = null; renderAll(); return; }
+
+    const firstEntry = baseEntryAtEffective(pendingSwap.day, pendingSwap.period, pendingSwap.room);
+    const secondEntry = entry;
+    showModal({
+      message: `다음 두 교시를 교환할까요?\n\n① ${slotDescription(pendingSwap.day, pendingSwap.period, pendingSwap.room, firstEntry)}\n② ${slotDescription(day, period, room, secondEntry)}`,
+      onOk: () => {
+        week.swaps = week.swaps || [];
+        week.swaps.push({
+          dayA: pendingSwap.day, periodA: pendingSwap.period, roomA: pendingSwap.room,
+          dayB: day, periodB: period, roomB: room,
+        });
+        saveData();
+        pendingSwap = null;
+        renderAll();
+      }
+    });
     pendingSwap = null;
     renderAll();
     return;
   }
-  const week = currentWeek();
-  if (!week) { pendingSwap = null; renderAll(); return; }
 
-  const firstEntry = baseEntryAtEffective(pendingSwap.day, pendingSwap.period, pendingSwap.room);
-  const secondEntry = entry;
-  showModal({
-    message: `다음 두 교시를 교환할까요?\n\n① ${slotDescription(pendingSwap.day, pendingSwap.period, pendingSwap.room, firstEntry)}\n② ${slotDescription(day, period, room, secondEntry)}`,
-    onOk: () => {
-      if (!week.swaps) week.swaps = [];
-      week.swaps.push({
-        dayA: pendingSwap.day, periodA: pendingSwap.period, roomA: pendingSwap.room,
-        dayB: day, periodB: period, roomB: room,
-      });
-      pendingSwap = null;
-      saveWeeks();
-    }
-  });
-  pendingSwap = null;
-  renderAll();
+  if (!entry) {
+    pendingSwap = { day, period, room };
+    renderAll();
+    return;
+  }
+
+  showChoiceModal(slotDescription(day, period, room, entry), [
+    {
+      label: "다른 교시와 교환하기",
+      desc: "이 수업을 다른 요일·교시의 수업과 서로 맞바꿉니다.",
+      onClick: () => { pendingSwap = { day, period, room }; renderAll(); }
+    },
+    {
+      label: "결보강 등록 (선생님만 대체)",
+      desc: "과목은 그대로 두고, 이 시간의 담당 선생님만 바꿉니다.",
+      onClick: () => {
+        showTeacherPickModal(`${entry.subject} 결보강 — 대신 들어갈 선생님`, entry.teacherIdx, (newIdx) => {
+          const week = currentWeek();
+          if (!week) return;
+          week.subs = week.subs || [];
+          const existingIdx = week.subs.findIndex(su => su.day === day && su.period === period && su.room === room);
+          const record = { day, period, room, teacherIdx: newIdx };
+          if (existingIdx >= 0) week.subs[existingIdx] = record; else week.subs.push(record);
+          saveData();
+          renderAll();
+        });
+      }
+    },
+  ]);
 }
 
 function renderTable(eff) {
@@ -632,15 +773,16 @@ function renderTable(eff) {
         return;
       }
 
-      let entry = null, changed = false, key = null;
+      let entry = null, changed = false, subbed = false, key = null;
       if (mode === "class") {
         key = `${d}|${period}|${selectedRoom}`;
         entry = eff.map.get(key) || null;
         changed = eff.changed.has(key);
+        subbed = eff.subbed.has(key);
       } else {
         const idx = TEACHERS.indexOf(selectedTeacher);
         const found = findTeacherEntry(eff.map, d, period, idx);
-        if (found) { entry = found.entry; changed = eff.changed.has(found.key); }
+        if (found) { entry = found.entry; changed = eff.changed.has(found.key); subbed = eff.subbed.has(found.key); key = found.key; }
       }
 
       const td = document.createElement("td");
@@ -658,7 +800,13 @@ function renderTable(eff) {
               return found ? roomLabel(found.room) : "";
             })();
         td.innerHTML = `<div class="class-tag" style="background:${color}">${entry.subject}</div>` + (sub ? `<div class="class-sub">${sub}</div>` : "");
-        if (changed) {
+        if (subbed) {
+          const badge = document.createElement("div");
+          badge.className = "badge-swap badge-sub";
+          td.appendChild(badge);
+          const orig = baseMap.get(key);
+          td.title = "결보강 — 원래 담당: " + (orig ? TEACHERS[orig.teacherIdx] : "-");
+        } else if (changed) {
           const badge = document.createElement("div");
           badge.className = "badge-swap";
           td.appendChild(badge);
@@ -693,8 +841,12 @@ function renderLegend() {
   });
   const swapItem = document.createElement("div");
   swapItem.className = "legend-item";
-  swapItem.innerHTML = `<span class="legend-dot" style="background:var(--accent)"></span>교환됨 (마우스를 올리면 원래 수업 표시)`;
+  swapItem.innerHTML = `<span class="legend-dot" style="background:var(--accent)"></span>교환됨`;
   legend.appendChild(swapItem);
+  const subItem = document.createElement("div");
+  subItem.className = "legend-item";
+  subItem.innerHTML = `<span class="legend-dot" style="background:#2C5C8A"></span>결보강됨 (마우스를 올리면 원래 담당 표시)`;
+  legend.appendChild(subItem);
 }
 
 function escapeHtml(s) {
@@ -726,12 +878,13 @@ function renderAll() {
   document.getElementById("metaLabel").textContent = mode === "teacher" ? `${selectedTeacher} 선생님` : `${roomLabel(selectedRoom)}`;
   document.getElementById("metaCount").textContent = `주 ${count}시간`;
   const week = currentWeek();
-  document.getElementById("metaSwapTag").style.display = (week && week.swaps && week.swaps.length > 0) ? "" : "none";
+  document.getElementById("metaSwapTag").style.display = (week && ((week.swaps && week.swaps.length > 0) || (week.subs && week.subs.length > 0))) ? "" : "none";
 
   if (mode === "teacher") renderTeacherChips(); else renderClassChips();
   renderTable(eff);
 }
 
+// 이벤트 리스너 설정
 document.getElementById("btnTeacher").onclick = () => { mode = "teacher"; pendingSwap = null; renderAll(); };
 document.getElementById("btnClass").onclick = () => { mode = "class"; pendingSwap = null; renderAll(); };
 document.getElementById("teacherSearch").oninput = (e) => {
@@ -749,7 +902,7 @@ document.getElementById("pendingCancelBtn").onclick = () => { pendingSwap = null
 document.getElementById("adminToggle").onclick = () => {
   if (!adminMode) {
     showModal({
-      message: "관리자 모드를 켜면 여기서 수정한 내용이 저장되어 이 화면을 보는 모든 사람에게 실시간으로 반영됩니다. 계속할까요?",
+      message: "관리자 모드를 켜면 여기서 수정한 내용이 클라우드에 저장되어 이 화면을 보는 모든 선생님께 즉시 반영됩니다. 계속할까요?",
       onOk: () => { adminMode = true; renderAll(); }
     });
     return;
@@ -760,7 +913,7 @@ document.getElementById("adminToggle").onclick = () => {
 };
 
 renderLegend();
-initStorage();
+initDataSync();
 </script>
 </body>
 </html>
