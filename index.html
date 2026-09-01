@@ -303,14 +303,26 @@ ROWS.forEach(([day, period, teacherIdx, room, subject]) => {
 --------------------------------------------------------- */
 const STORAGE_KEY = "hs_timetable_weeks_v1";
 
-let weeks = [];             // [{id, label, swaps:[...], subs:[...]}]
+let weeks = [];             // [{id, label}]  — 교환/결보강은 exchanges에 별도 저장
+let exchanges = [];         // [{id, type:'swap', a:{weekId,day,period,room,teacherIdx,subject}, b:{...}}
+                             //  {id, type:'sub',  weekId, day, period, room, teacherIdx}]
 let selectedWeekId = null;  // null = 기본 시간표
 let mode = "teacher";
 let selectedTeacher = TEACHERS[0];
 let selectedRoom = ROOMS[0];
 let query = "";
 let adminMode = false;
-let pendingSwap = null;     // {day, period, room}
+let pendingSwap = null;     // {weekId, day, period, room} — 교환의 첫 번째로 선택한 슬롯
+
+function weekLabel(id) {
+  if (id === null || id === undefined) return "기본 시간표";
+  const w = weeks.find(x => x.id === id);
+  return w ? w.label : "(삭제된 주차)";
+}
+
+function newId(prefix) {
+  return prefix + Date.now() + Math.floor(Math.random() * 1000);
+}
 
 const dayMap = ["일","월","화","수","목","금","토"];
 const today = dayMap[new Date().getDay()];
@@ -318,6 +330,39 @@ const today = dayMap[new Date().getDay()];
 /* ---------------------------------------------------------
    데이터 동기화 (Firebase Realtime Database)
 --------------------------------------------------------- */
+// 예전 형식(주차 객체 안에 swaps/subs가 들어있던 구조)을
+// 새 형식(주차 메타데이터 + 전역 exchanges 목록)으로 변환
+function migrateLegacyData(raw) {
+  if (!raw) return { weeks: [], exchanges: [] };
+
+  // 새 형식으로 이미 저장된 경우
+  if (!Array.isArray(raw) && raw.weeks) {
+    return { weeks: raw.weeks || [], exchanges: raw.exchanges || [] };
+  }
+
+  // 예전 형식: raw 자체가 주차 배열이고, 각 주차 안에 swaps/subs가 들어있음
+  const legacyWeeks = Array.isArray(raw) ? raw : [];
+  const newWeeks = [];
+  const newExchanges = [];
+  legacyWeeks.forEach(w => {
+    newWeeks.push({ id: w.id, label: w.label });
+    (w.swaps || []).forEach(sw => {
+      const a = baseMap.get(`${sw.dayA}|${sw.periodA}|${sw.roomA}`);
+      const b = baseMap.get(`${sw.dayB}|${sw.periodB}|${sw.roomB}`);
+      newExchanges.push({
+        id: newId("sw"),
+        type: "swap",
+        a: { weekId: w.id, day: sw.dayA, period: sw.periodA, room: sw.roomA, teacherIdx: a ? a.teacherIdx : null, subject: a ? a.subject : null },
+        b: { weekId: w.id, day: sw.dayB, period: sw.periodB, room: sw.roomB, teacherIdx: b ? b.teacherIdx : null, subject: b ? b.subject : null },
+      });
+    });
+    (w.subs || []).forEach(su => {
+      newExchanges.push({ id: newId("su"), type: "sub", weekId: w.id, day: su.day, period: su.period, room: su.room, teacherIdx: su.teacherIdx });
+    });
+  });
+  return { weeks: newWeeks, exchanges: newExchanges };
+}
+
 function setStorageStatus(kind) {
   const el = document.getElementById("storageStatus");
   el.classList.remove("warn");
@@ -337,17 +382,21 @@ function initDataSync() {
     setStorageStatus("cloud");
     // 데이터 변경 실시간 감지
     db.ref("timetable_weeks").on("value", (snapshot) => {
-      const data = snapshot.val();
-      weeks = data ? data : [];
+      const migrated = migrateLegacyData(snapshot.val());
+      weeks = migrated.weeks;
+      exchanges = migrated.exchanges;
       renderAll();
     });
   } else {
     try {
       const raw = localStorage.getItem(STORAGE_KEY);
-      weeks = raw ? JSON.parse(raw) : [];
+      const migrated = migrateLegacyData(raw ? JSON.parse(raw) : null);
+      weeks = migrated.weeks;
+      exchanges = migrated.exchanges;
       setStorageStatus("local");
     } catch (e) {
       weeks = [];
+      exchanges = [];
       setStorageStatus("none");
     }
     renderAll();
@@ -355,14 +404,15 @@ function initDataSync() {
 }
 
 function saveData() {
+  const payload = { weeks, exchanges };
   if (db) {
-    db.ref("timetable_weeks").set(weeks).catch((err) => {
+    db.ref("timetable_weeks").set(payload).catch((err) => {
       console.error("Firebase 저장 실패:", err);
       alert("데이터 저장 실패: " + err.message);
     });
   } else {
     try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(weeks));
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
     } catch (e) {
       console.error(e);
     }
@@ -376,32 +426,45 @@ function currentWeek() {
   return weeks.find(w => w.id === selectedWeekId) || null;
 }
 
-function buildEffective() {
+function buildEffective(weekId) {
+  const id = weekId !== undefined ? weekId : selectedWeekId;
   const map = new Map(baseMap);
   const changed = new Set();
   const subbed = new Set();
-  const week = currentWeek();
-  if (week) {
-    (week.swaps || []).forEach(sw => {
-      const keyA = `${sw.dayA}|${sw.periodA}|${sw.roomA}`;
-      const keyB = `${sw.dayB}|${sw.periodB}|${sw.roomB}`;
-      const valA = map.has(keyA) ? map.get(keyA) : null;
-      const valB = map.has(keyB) ? map.get(keyB) : null;
-      if (valB) map.set(keyA, valB); else map.delete(keyA);
-      if (valA) map.set(keyB, valA); else map.delete(keyB);
-      changed.add(keyA);
-      changed.add(keyB);
+  if (id !== null && id !== undefined) {
+    exchanges.forEach(ex => {
+      if (ex.type === "swap") {
+        if (ex.a.weekId === id) {
+          const key = `${ex.a.day}|${ex.a.period}|${ex.a.room}`;
+          if (ex.b.subject != null) map.set(key, { teacherIdx: ex.b.teacherIdx, subject: ex.b.subject });
+          else map.delete(key);
+          changed.add(key);
+        }
+        if (ex.b.weekId === id) {
+          const key = `${ex.b.day}|${ex.b.period}|${ex.b.room}`;
+          if (ex.a.subject != null) map.set(key, { teacherIdx: ex.a.teacherIdx, subject: ex.a.subject });
+          else map.delete(key);
+          changed.add(key);
+        }
+      }
     });
-    (week.subs || []).forEach(su => {
-      const key = `${su.day}|${su.period}|${su.room}`;
-      const cur = map.get(key);
-      if (cur) {
-        map.set(key, { teacherIdx: su.teacherIdx, subject: cur.subject });
-        subbed.add(key);
+    exchanges.forEach(ex => {
+      if (ex.type === "sub" && ex.weekId === id) {
+        const key = `${ex.day}|${ex.period}|${ex.room}`;
+        const cur = map.get(key);
+        if (cur) {
+          map.set(key, { teacherIdx: ex.teacherIdx, subject: cur.subject });
+          subbed.add(key);
+        }
       }
     });
   }
   return { map, changed, subbed };
+}
+
+function effectiveEntryAt(weekId, day, period, room) {
+  const { map } = buildEffective(weekId);
+  return map.get(`${day}|${period}|${room}`) || null;
 }
 
 function findTeacherEntry(effMap, day, period, teacherIdx) {
@@ -413,8 +476,8 @@ function findTeacherEntry(effMap, day, period, teacherIdx) {
   return null;
 }
 
-function slotDescription(day, period, room, entry) {
-  const base = `${roomLabel(room)} ${DAY_FULL[day]} ${period}교시`;
+function slotDescription(weekId, day, period, room, entry) {
+  const base = `[${weekLabel(weekId)}] ${roomLabel(room)} ${DAY_FULL[day]} ${period}교시`;
   if (!entry) return `${base} (빈 시간)`;
   if (entry.subject === "창체") return `${base} — ${entry.subject}`;
   return `${base} — ${entry.subject} · ${TEACHERS[entry.teacherIdx]}`;
@@ -533,7 +596,9 @@ function renderWeekChips() {
   const baseBtn = document.createElement("button");
   baseBtn.className = "chip week" + (selectedWeekId === null ? " active" : "");
   baseBtn.textContent = "기본 시간표";
-  baseBtn.onclick = () => { selectedWeekId = null; pendingSwap = null; renderAll(); };
+  // 기본 시간표는 항상 원본 그대로 유지해야 하므로 편집 대상이 될 수 없지만,
+  // 다른 주차와 교환을 진행 중이었다면 그 선택은 유지한다 (탐색용으로만 전환)
+  baseBtn.onclick = () => { selectedWeekId = null; renderAll(); };
   container.appendChild(baseBtn);
 
   weeks.forEach(w => {
@@ -544,18 +609,23 @@ function renderWeekChips() {
       if (e.target && e.target.dataset && e.target.dataset.del) {
         e.stopPropagation();
         showModal({
-          message: `"${w.label}" 주차와 등록된 교환 내용을 모두 삭제할까요?`,
+          message: `"${w.label}" 주차와 이 주차가 관련된 모든 교환·결보강 기록을 삭제할까요?\n(다른 주차와 연결된 교환도 함께 삭제됩니다)`,
           onOk: () => {
             weeks = weeks.filter(x => x.id !== w.id);
+            // 이 주차를 참조하는 exchanges는 한쪽이 사라지면 의미가 없으므로 함께 제거
+            exchanges = exchanges.filter(ex =>
+              ex.type === "swap" ? (ex.a.weekId !== w.id && ex.b.weekId !== w.id) : ex.weekId !== w.id
+            );
             if (selectedWeekId === w.id) selectedWeekId = null;
+            if (pendingSwap && pendingSwap.weekId === w.id) pendingSwap = null;
             saveData();
             renderAll();
           }
         });
         return;
       }
+      // 주차 전환 시 pendingSwap을 유지해야 "다른 주차의 교시와 교환"이 가능함
       selectedWeekId = w.id;
-      pendingSwap = null;
       renderAll();
     };
     container.appendChild(btn);
@@ -571,7 +641,7 @@ function renderWeekChips() {
         withInput: true,
         onOk: (label) => {
           if (label && label.trim()) {
-            const w = { id: "w" + Date.now(), label: label.trim(), swaps: [], subs: [] };
+            const w = { id: newId("w"), label: label.trim() };
             weeks.push(w);
             selectedWeekId = w.id;
             saveData();
@@ -594,24 +664,25 @@ function renderSwapPanel() {
   panel.style.display = "";
   list.innerHTML = "";
 
-  const swaps = week.swaps || [];
-  const subs = week.subs || [];
+  const relevantSwaps = exchanges.filter(ex => ex.type === "swap" && (ex.a.weekId === week.id || ex.b.weekId === week.id));
+  const relevantSubs = exchanges.filter(ex => ex.type === "sub" && ex.weekId === week.id);
 
-  if (swaps.length === 0 && subs.length === 0) {
+  if (relevantSwaps.length === 0 && relevantSubs.length === 0) {
     const div = document.createElement("div");
     div.className = "swap-empty";
     div.textContent = "이번 주는 아직 등록된 교환·결보강이 없습니다.";
     list.appendChild(div);
   } else {
-    swaps.forEach((sw, idx) => {
-      const a = baseMap.get(`${sw.dayA}|${sw.periodA}|${sw.roomA}`);
-      const b = baseMap.get(`${sw.dayB}|${sw.periodB}|${sw.roomB}`);
+    relevantSwaps.forEach(ex => {
+      const crossWeek = ex.a.weekId !== ex.b.weekId;
       const item = document.createElement("div");
       item.className = "swap-item";
+      const descA = `${crossWeek ? "[" + weekLabel(ex.a.weekId) + "] " : ""}${roomLabel(ex.a.room)} ${DAY_FULL[ex.a.day]} ${ex.a.period}교시`;
+      const descB = `${crossWeek ? "[" + weekLabel(ex.b.weekId) + "] " : ""}${roomLabel(ex.b.room)} ${DAY_FULL[ex.b.day]} ${ex.b.period}교시`;
       item.innerHTML = `
         <div>
-          <div>🔁 ${roomLabel(sw.roomA)} ${DAY_FULL[sw.dayA]} ${sw.periodA}교시 ↔ ${roomLabel(sw.roomB)} ${DAY_FULL[sw.dayB]} ${sw.periodB}교시</div>
-          <div class="orig">원래: ${a ? (a.subject === "창체" ? a.subject : a.subject + "·" + TEACHERS[a.teacherIdx]) : "빈 시간"} ↔ ${b ? (b.subject === "창체" ? b.subject : b.subject + "·" + TEACHERS[b.teacherIdx]) : "빈 시간"}</div>
+          <div>🔁 ${descA} ↔ ${descB}</div>
+          <div class="orig">원래: ${ex.a.subject ? (ex.a.subject === "창체" ? ex.a.subject : ex.a.subject + "·" + TEACHERS[ex.a.teacherIdx]) : "빈 시간"} ↔ ${ex.b.subject ? (ex.b.subject === "창체" ? ex.b.subject : ex.b.subject + "·" + TEACHERS[ex.b.teacherIdx]) : "빈 시간"}</div>
         </div>
       `;
       if (adminMode) {
@@ -619,7 +690,7 @@ function renderSwapPanel() {
         delBtn.className = "swap-del-btn";
         delBtn.textContent = "✕";
         delBtn.onclick = () => {
-          week.swaps.splice(idx, 1);
+          exchanges = exchanges.filter(x => x.id !== ex.id);
           saveData();
           renderAll();
         };
@@ -628,13 +699,13 @@ function renderSwapPanel() {
       list.appendChild(item);
     });
 
-    subs.forEach((su, idx) => {
-      const orig = baseMap.get(`${su.day}|${su.period}|${su.room}`);
+    relevantSubs.forEach(ex => {
+      const orig = baseMap.get(`${ex.day}|${ex.period}|${ex.room}`);
       const item = document.createElement("div");
       item.className = "swap-item";
       item.innerHTML = `
         <div>
-          <div>🩹 ${roomLabel(su.room)} ${DAY_FULL[su.day]} ${su.period}교시 결보강 — ${TEACHERS[su.teacherIdx]}</div>
+          <div>🩹 ${roomLabel(ex.room)} ${DAY_FULL[ex.day]} ${ex.period}교시 결보강 — ${TEACHERS[ex.teacherIdx]}</div>
           <div class="orig">원래 담당: ${orig ? TEACHERS[orig.teacherIdx] : "-"} (${orig ? orig.subject : "-"} 과목 유지)</div>
         </div>
       `;
@@ -643,7 +714,7 @@ function renderSwapPanel() {
         delBtn.className = "swap-del-btn";
         delBtn.textContent = "✕";
         delBtn.onclick = () => {
-          week.subs.splice(idx, 1);
+          exchanges = exchanges.filter(x => x.id !== ex.id);
           saveData();
           renderAll();
         };
@@ -656,7 +727,7 @@ function renderSwapPanel() {
   if (adminMode) {
     hint.style.display = "";
     hint.textContent = mode === "class"
-      ? "학급별 보기에서 수업이 있는 칸을 클릭하면 교환·결보강을 등록할 수 있습니다."
+      ? "학급별 보기에서 수업이 있는 칸을 클릭하면 교환·결보강을 등록할 수 있습니다. 다른 주차와 교환하려면, 첫 번째 교시를 고른 뒤 위에서 주차를 바꿔 두 번째 교시를 클릭하세요."
       : "수업 교환·결보강 편집은 학급별 보기에서만 가능합니다.";
   } else {
     hint.style.display = "none";
@@ -666,18 +737,14 @@ function renderSwapPanel() {
 function renderPendingBanner() {
   const banner = document.getElementById("pendingBanner");
   if (pendingSwap) {
-    const entry = baseEntryAtEffective(pendingSwap.day, pendingSwap.period, pendingSwap.room);
+    const entry = effectiveEntryAt(pendingSwap.weekId, pendingSwap.day, pendingSwap.period, pendingSwap.room);
+    const crossWeekHint = pendingSwap.weekId !== selectedWeekId ? " (다른 주차와 교환하려면 그 주차로 이동해 칸을 클릭하세요)" : "";
     document.getElementById("pendingText").textContent =
-      "선택됨: " + slotDescription(pendingSwap.day, pendingSwap.period, pendingSwap.room, entry) + " — 교환할 다른 교시를 클릭하세요";
+      "선택됨: " + slotDescription(pendingSwap.weekId, pendingSwap.day, pendingSwap.period, pendingSwap.room, entry) + " — 교환할 다른 교시를 클릭하세요" + crossWeekHint;
     banner.classList.add("show");
   } else {
     banner.classList.remove("show");
   }
-}
-
-function baseEntryAtEffective(day, period, room) {
-  const { map } = buildEffective();
-  return map.get(`${day}|${period}|${room}`) || null;
 }
 
 function renderTeacherChips() {
@@ -714,30 +781,35 @@ function renderClassChips() {
 
 function handleCellClick(day, period, room, entry) {
   if (pendingSwap) {
-    if (pendingSwap.day === day && pendingSwap.period === period && pendingSwap.room === room) {
+    const isSameSlot = pendingSwap.weekId === selectedWeekId && pendingSwap.day === day && pendingSwap.period === period && pendingSwap.room === room;
+    if (isSameSlot) {
       pendingSwap = null;
       renderAll();
       return;
     }
-    const week = currentWeek();
-    if (!week) { pendingSwap = null; renderAll(); return; }
 
-    const firstEntry = baseEntryAtEffective(pendingSwap.day, pendingSwap.period, pendingSwap.room);
+    const swapSource = { weekId: pendingSwap.weekId, day: pendingSwap.day, period: pendingSwap.period, room: pendingSwap.room };
+    const swapTarget = { weekId: selectedWeekId, day, period, room };
+    if (!weeks.some(w => w.id === swapSource.weekId) || !weeks.some(w => w.id === swapTarget.weekId)) {
+      pendingSwap = null;
+      renderAll();
+      return;
+    }
+
+    const firstEntry = effectiveEntryAt(swapSource.weekId, swapSource.day, swapSource.period, swapSource.room);
     const secondEntry = entry;
-    const swapTarget = { day, period, room };
-    const swapSource = { day: pendingSwap.day, period: pendingSwap.period, room: pendingSwap.room };
     showModal({
-      message: `다음 두 교시를 교환할까요?\n\n① ${slotDescription(swapSource.day, swapSource.period, swapSource.room, firstEntry)}\n② ${slotDescription(swapTarget.day, swapTarget.period, swapTarget.room, secondEntry)}`,
+      message: `다음 두 교시를 교환할까요?\n\n① ${slotDescription(swapSource.weekId, swapSource.day, swapSource.period, swapSource.room, firstEntry)}\n② ${slotDescription(swapTarget.weekId, swapTarget.day, swapTarget.period, swapTarget.room, secondEntry)}`,
       onOk: () => {
-        // 확인을 누르는 시점에 최신 데이터를 다시 가져와야 함 —
-        // 확인창이 떠 있는 동안 실시간 동기화로 weeks가 새 데이터로 교체될 수 있어,
-        // 모달을 열기 전에 미리 붙잡아둔 week 참조를 그대로 쓰면 저장이 유실될 수 있음
-        const freshWeek = currentWeek();
-        if (!freshWeek) return;
-        freshWeek.swaps = freshWeek.swaps || [];
-        freshWeek.swaps.push({
-          dayA: swapSource.day, periodA: swapSource.period, roomA: swapSource.room,
-          dayB: swapTarget.day, periodB: swapTarget.period, roomB: swapTarget.room,
+        // 확인을 누르는 시점에 각 슬롯의 최신 내용을 다시 가져와서 고정한다 —
+        // 확인창이 떠 있는 동안 실시간 동기화로 데이터가 새로 바뀔 수 있으므로
+        const freshA = effectiveEntryAt(swapSource.weekId, swapSource.day, swapSource.period, swapSource.room);
+        const freshB = effectiveEntryAt(swapTarget.weekId, swapTarget.day, swapTarget.period, swapTarget.room);
+        exchanges.push({
+          id: newId("sw"),
+          type: "swap",
+          a: { weekId: swapSource.weekId, day: swapSource.day, period: swapSource.period, room: swapSource.room, teacherIdx: freshA ? freshA.teacherIdx : null, subject: freshA ? freshA.subject : null },
+          b: { weekId: swapTarget.weekId, day: swapTarget.day, period: swapTarget.period, room: swapTarget.room, teacherIdx: freshB ? freshB.teacherIdx : null, subject: freshB ? freshB.subject : null },
         });
         saveData();
         pendingSwap = null;
@@ -750,28 +822,27 @@ function handleCellClick(day, period, room, entry) {
   }
 
   if (!entry) {
-    pendingSwap = { day, period, room };
+    pendingSwap = { weekId: selectedWeekId, day, period, room };
     renderAll();
     return;
   }
 
-  showChoiceModal(slotDescription(day, period, room, entry), [
+  showChoiceModal(slotDescription(selectedWeekId, day, period, room, entry), [
     {
       label: "다른 교시와 교환하기",
-      desc: "이 수업을 다른 요일·교시의 수업과 서로 맞바꿉니다.",
-      onClick: () => { pendingSwap = { day, period, room }; renderAll(); }
+      desc: "이 수업을 다른 요일·교시(다른 주차 포함)의 수업과 서로 맞바꿉니다. 다음 주와 바꾸려면, 선택 후 위에서 주차를 바꿔 두 번째 교시를 클릭하세요.",
+      onClick: () => { pendingSwap = { weekId: selectedWeekId, day, period, room }; renderAll(); }
     },
     {
       label: "결보강 등록 (선생님만 대체)",
       desc: "과목은 그대로 두고, 이 시간의 담당 선생님만 바꿉니다.",
       onClick: () => {
         showTeacherPickModal(`${entry.subject} 결보강 — 대신 들어갈 선생님`, entry.teacherIdx, (newIdx) => {
-          const week = currentWeek();
-          if (!week) return;
-          week.subs = week.subs || [];
-          const existingIdx = week.subs.findIndex(su => su.day === day && su.period === period && su.room === room);
-          const record = { day, period, room, teacherIdx: newIdx };
-          if (existingIdx >= 0) week.subs[existingIdx] = record; else week.subs.push(record);
+          const weekIdAtPick = selectedWeekId;
+          if (!weeks.some(w => w.id === weekIdAtPick)) return;
+          const existingIdx = exchanges.findIndex(ex => ex.type === "sub" && ex.weekId === weekIdAtPick && ex.day === day && ex.period === period && ex.room === room);
+          const record = { id: existingIdx >= 0 ? exchanges[existingIdx].id : newId("su"), type: "sub", weekId: weekIdAtPick, day, period, room, teacherIdx: newIdx };
+          if (existingIdx >= 0) exchanges[existingIdx] = record; else exchanges.push(record);
           saveData();
           renderAll();
         });
@@ -855,7 +926,7 @@ function renderTable(eff) {
 
       if (editable) {
         td.classList.add("cell-editable");
-        if (pendingSwap && pendingSwap.day === d && pendingSwap.period === period && pendingSwap.room === selectedRoom) {
+        if (pendingSwap && pendingSwap.weekId === selectedWeekId && pendingSwap.day === d && pendingSwap.period === period && pendingSwap.room === selectedRoom) {
           td.classList.add("cell-selected");
         }
         td.onclick = () => handleCellClick(d, period, selectedRoom, entry);
@@ -915,7 +986,10 @@ function renderAll() {
   document.getElementById("metaLabel").textContent = mode === "teacher" ? `${selectedTeacher} 선생님` : `${roomLabel(selectedRoom)}`;
   document.getElementById("metaCount").textContent = `주 ${count}시간`;
   const week = currentWeek();
-  document.getElementById("metaSwapTag").style.display = (week && ((week.swaps && week.swaps.length > 0) || (week.subs && week.subs.length > 0))) ? "" : "none";
+  const hasSwapOrSub = week && exchanges.some(ex =>
+    ex.type === "swap" ? (ex.a.weekId === week.id || ex.b.weekId === week.id) : ex.weekId === week.id
+  );
+  document.getElementById("metaSwapTag").style.display = hasSwapOrSub ? "" : "none";
 
   if (mode === "teacher") renderTeacherChips(); else renderClassChips();
   renderTable(eff);
