@@ -127,6 +127,38 @@
 
   footer.note { margin-top: 14px; font-size: 11.5px; color: var(--faint); text-align: center; }
 
+  /* 전체 보기 (요일x교시 x 전체 교사) */
+  .all-table-wrap { max-height: 640px; overflow: auto; }
+  .all-table { border-collapse: collapse; font-size: 11px; min-width: 100%; }
+  .all-table th, .all-table td { border-right: 1px solid var(--border-soft); border-bottom: 1px solid var(--border-soft); }
+  .all-table th:last-child, .all-table td:last-child { border-right: none; }
+  .all-day-header, .all-period-header, .all-teacher-header {
+    background: var(--panel-alt); font-weight: 700; color: var(--ink-soft); font-size: 11px;
+    padding: 8px 4px; position: sticky; top: 0; z-index: 3; white-space: nowrap;
+  }
+  .all-day-cell, .all-period-cell {
+    background: var(--panel-alt); font-weight: 700; color: var(--muted-2); font-size: 11px;
+    text-align: center; padding: 6px 4px; position: sticky; z-index: 2; white-space: nowrap;
+  }
+  .all-day-cell { left: 0; min-width: 34px; z-index: 4; }
+  .all-period-cell { left: 34px; min-width: 30px; }
+  .all-day-header { left: 0; z-index: 5; min-width: 34px; }
+  .all-period-header { left: 34px; z-index: 4; min-width: 30px; }
+  .all-day-cell.today, .all-day-header.today { background: var(--ink); color: var(--bg); }
+  .all-teacher-header { min-width: 62px; text-align: center; }
+  .all-table .class-cell { padding: 3px 2px; min-width: 62px; }
+  .all-table .class-tag { font-size: 10px; padding: 3px 0; margin-bottom: 1px; border-radius: 4px; }
+  .all-table .class-sub { font-size: 8.5px; }
+  .all-table .empty-cell { min-width: 62px; font-size: 11px; }
+  .all-merged {
+    text-align: center; font-size: 11.5px; font-weight: 700; color: var(--muted);
+    background: repeating-linear-gradient(135deg, var(--panel), var(--panel) 6px, var(--panel-alt) 6px, var(--panel-alt) 12px);
+    padding: 8px 4px;
+  }
+  .all-day-row-alt td.class-cell, .all-day-row-alt td.empty-cell, .all-day-row-alt td.all-merged { background: #EDEAE0; }
+  .all-day-row-alt .all-period-cell { background: #E8E4D6; }
+  .all-day-divider td { border-top: 2px solid var(--ink-soft); }
+
   .modal-overlay {
     display: none; position: fixed; inset: 0; background: rgba(35,32,23,0.45);
     align-items: center; justify-content: center; padding: 20px; z-index: 100;
@@ -187,6 +219,7 @@
     <div class="segment">
       <button id="btnTeacher" class="active">교사별 보기</button>
       <button id="btnClass">학급별 보기</button>
+      <button id="btnAll">전체 보기</button>
     </div>
 
     <div class="selector-block">
@@ -224,6 +257,13 @@
       <table>
         <thead><tr id="headRow"></tr></thead>
         <tbody id="bodyRows"></tbody>
+      </table>
+    </div>
+
+    <div class="table-wrap all-table-wrap" id="allTableWrap" style="display:none;">
+      <table class="all-table">
+        <thead><tr id="allHeadRow"></tr></thead>
+        <tbody id="allBodyRows"></tbody>
       </table>
     </div>
 
@@ -938,6 +978,84 @@ function renderTable(eff) {
   }
 }
 
+function renderAllTable(eff) {
+  const headRow = document.getElementById("allHeadRow");
+  headRow.innerHTML = '<th class="all-day-header all-day-cell">요일</th><th class="all-period-header all-period-cell">교시</th>';
+  TEACHERS.forEach(name => {
+    const th = document.createElement("th");
+    th.className = "all-teacher-header";
+    th.textContent = name;
+    headRow.appendChild(th);
+  });
+
+  const body = document.getElementById("allBodyRows");
+  body.innerHTML = "";
+
+  DAYS.forEach((d, dayIdx) => {
+    const totalPeriods = PERIODS_BY_DAY[d];
+    for (let period = 1; period <= totalPeriods; period++) {
+      const tr = document.createElement("tr");
+      tr.className = "all-day-row" + (dayIdx % 2 === 1 ? " all-day-row-alt" : "") + (period === 1 && dayIdx > 0 ? " all-day-divider" : "");
+
+      if (period === 1) {
+        const dayTd = document.createElement("td");
+        dayTd.className = "all-day-cell" + (d === today ? " today" : "");
+        dayTd.textContent = DAY_FULL[d];
+        dayTd.rowSpan = totalPeriods;
+        tr.appendChild(dayTd);
+      }
+
+      const periodTd = document.createElement("td");
+      periodTd.className = "all-period-cell";
+      periodTd.textContent = period;
+      tr.appendChild(periodTd);
+
+      // 창의적 체험활동(금 5·6교시)은 학급 공용이라 교사별로 나눌 필요 없이 한 줄로 병합
+      if (d === "금" && (period === 5 || period === 6)) {
+        const mergedTd = document.createElement("td");
+        mergedTd.colSpan = TEACHERS.length;
+        mergedTd.className = "all-merged";
+        mergedTd.textContent = "창의적 체험활동 (학급 공용)";
+        tr.appendChild(mergedTd);
+        body.appendChild(tr);
+        continue;
+      }
+
+      TEACHERS.forEach((name, idx) => {
+        const found = findTeacherEntry(eff.map, d, period, idx);
+        const td = document.createElement("td");
+        if (!found) {
+          td.className = "empty-cell";
+          td.textContent = "-";
+        } else {
+          td.className = "class-cell";
+          const cat = categoryOf(found.entry.subject);
+          const color = CATEGORY_COLOR[cat];
+          td.innerHTML = `<div class="class-tag" style="background:${color}">${found.entry.subject}</div><div class="class-sub">${roomLabel(found.room)}</div>`;
+          if (eff.subbed.has(found.key)) {
+            const badge = document.createElement("div");
+            badge.className = "badge-swap badge-sub";
+            td.appendChild(badge);
+            const orig = baseMap.get(found.key);
+            td.title = `${name} — 결보강 · 원래 담당: ` + (orig ? TEACHERS[orig.teacherIdx] : "-");
+          } else if (eff.changed.has(found.key)) {
+            const badge = document.createElement("div");
+            badge.className = "badge-swap";
+            td.appendChild(badge);
+            const orig = baseMap.get(found.key);
+            const origLabel = orig ? (orig.subject === "창체" ? orig.subject : orig.subject + " · " + TEACHERS[orig.teacherIdx]) : "빈 시간";
+            td.title = `${name} — 교환됨 · 원래: ` + origLabel;
+          }
+        }
+        tr.appendChild(td);
+      });
+
+      body.appendChild(tr);
+    }
+  });
+}
+
+
 function renderLegend() {
   const legend = document.getElementById("legend");
   legend.innerHTML = "";
@@ -967,8 +1085,11 @@ function renderAll() {
 
   document.getElementById("btnTeacher").classList.toggle("active", mode === "teacher");
   document.getElementById("btnClass").classList.toggle("active", mode === "class");
+  document.getElementById("btnAll").classList.toggle("active", mode === "all");
   document.getElementById("teacherSelector").style.display = mode === "teacher" ? "" : "none";
   document.getElementById("classSelector").style.display = mode === "class" ? "" : "none";
+  document.querySelector(".table-wrap:not(.all-table-wrap)").style.display = mode === "all" ? "none" : "";
+  document.getElementById("allTableWrap").style.display = mode === "all" ? "" : "none";
 
   renderWeekChips();
   renderSwapPanel();
@@ -976,28 +1097,41 @@ function renderAll() {
 
   const eff = buildEffective();
 
-  let count = 0;
-  if (mode === "class") {
-    DAYS.forEach(d => { for (let p = 1; p <= PERIODS_BY_DAY[d]; p++) { if (eff.map.get(`${d}|${p}|${selectedRoom}`)) count++; } });
-  } else {
-    const idx = TEACHERS.indexOf(selectedTeacher);
-    DAYS.forEach(d => { for (let p = 1; p <= PERIODS_BY_DAY[d]; p++) { if (findTeacherEntry(eff.map, d, p, idx)) count++; } });
-  }
-  document.getElementById("metaLabel").textContent = mode === "teacher" ? `${selectedTeacher} 선생님` : `${roomLabel(selectedRoom)}`;
-  document.getElementById("metaCount").textContent = `주 ${count}시간`;
   const week = currentWeek();
-  const hasSwapOrSub = week && exchanges.some(ex =>
+  const relevantExchanges = week ? exchanges.filter(ex =>
     ex.type === "swap" ? (ex.a.weekId === week.id || ex.b.weekId === week.id) : ex.weekId === week.id
-  );
-  document.getElementById("metaSwapTag").style.display = hasSwapOrSub ? "" : "none";
+  ) : [];
+  const hasSwapOrSub = relevantExchanges.length > 0;
 
-  if (mode === "teacher") renderTeacherChips(); else renderClassChips();
-  renderTable(eff);
+  if (mode === "all") {
+    document.getElementById("metaLabel").textContent = "전체 시간표";
+    const swapCount = relevantExchanges.filter(ex => ex.type === "swap").length;
+    const subCount = relevantExchanges.filter(ex => ex.type === "sub").length;
+    document.getElementById("metaCount").textContent = week
+      ? `교사 ${TEACHERS.length}명 · 학급 ${ROOMS.length}개 · 이번 주 교환 ${swapCount}건, 결보강 ${subCount}건`
+      : `교사 ${TEACHERS.length}명 · 학급 ${ROOMS.length}개`;
+    renderAllTable(eff);
+  } else {
+    let count = 0;
+    if (mode === "class") {
+      DAYS.forEach(d => { for (let p = 1; p <= PERIODS_BY_DAY[d]; p++) { if (eff.map.get(`${d}|${p}|${selectedRoom}`)) count++; } });
+    } else {
+      const idx = TEACHERS.indexOf(selectedTeacher);
+      DAYS.forEach(d => { for (let p = 1; p <= PERIODS_BY_DAY[d]; p++) { if (findTeacherEntry(eff.map, d, p, idx)) count++; } });
+    }
+    document.getElementById("metaLabel").textContent = mode === "teacher" ? `${selectedTeacher} 선생님` : `${roomLabel(selectedRoom)}`;
+    document.getElementById("metaCount").textContent = `주 ${count}시간`;
+    if (mode === "teacher") renderTeacherChips(); else renderClassChips();
+    renderTable(eff);
+  }
+
+  document.getElementById("metaSwapTag").style.display = hasSwapOrSub ? "" : "none";
 }
 
 // 이벤트 리스너 설정
 document.getElementById("btnTeacher").onclick = () => { mode = "teacher"; pendingSwap = null; renderAll(); };
 document.getElementById("btnClass").onclick = () => { mode = "class"; pendingSwap = null; renderAll(); };
+document.getElementById("btnAll").onclick = () => { mode = "all"; pendingSwap = null; renderAll(); };
 document.getElementById("teacherSearch").oninput = (e) => {
   query = e.target.value;
   document.getElementById("clearSearch").classList.toggle("show", query.length > 0);
