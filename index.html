@@ -80,7 +80,7 @@
   .chip.add-week { border-style: dashed; color: var(--muted-2); }
   .no-result { font-size: 13px; color: var(--faint); padding: 6px 2px; }
 
-  .swap-panel { margin-bottom: 16px; padding: 12px 14px; background: var(--panel); border: 1px solid var(--border); border-radius: 10px; }
+  .swap-panel { margin-top: 16px; margin-bottom: 16px; padding: 12px 14px; background: var(--panel); border: 1px solid var(--border); border-radius: 10px; }
   .swap-panel-title { font-size: 12.5px; font-weight: 700; color: var(--accent); margin-bottom: 8px; display: flex; align-items: center; gap: 6px; }
   .swap-item { display: flex; justify-content: space-between; align-items: center; gap: 8px; font-size: 13px; color: var(--ink-soft); padding: 6px 0; border-top: 1px solid var(--border-soft); }
   .swap-item:first-of-type { border-top: none; }
@@ -112,6 +112,8 @@
   .inactive-cell { background: repeating-linear-gradient(135deg, var(--bg), var(--bg) 4px, #EAE6D9 4px, #EAE6D9 8px); }
   .empty-cell { text-align: center; color: var(--faint); font-size: 12.5px; }
   .class-cell { padding: 6px; text-align: center; vertical-align: middle; position: relative; }
+  .cell-bg-swap { background: #FFF4C2 !important; }
+  .cell-bg-sub { background: #FBDCE4 !important; }
   .class-tag { color: #fff; font-size: 12.5px; font-weight: 700; border-radius: 6px; padding: 4px 0; margin-bottom: 3px; }
   .class-sub { font-size: 10.5px; color: var(--muted-2); font-weight: 600; }
 
@@ -229,12 +231,6 @@
       <div id="weekChips" class="chip-row"></div>
     </div>
 
-    <div id="swapPanel" class="swap-panel" style="display:none;">
-      <div class="swap-panel-title">📌 이번 주 수업 교환 안내</div>
-      <div id="swapList"></div>
-      <div id="adminEditHint" class="admin-hint" style="display:none;"></div>
-    </div>
-
     <div id="pendingBanner" class="pending-banner">
       <span id="pendingText"></span>
       <button class="pending-cancel" id="pendingCancelBtn">선택 취소</button>
@@ -267,6 +263,12 @@
         <thead><tr id="allHeadRow"></tr></thead>
         <tbody id="allBodyRows"></tbody>
       </table>
+    </div>
+
+    <div id="swapPanel" class="swap-panel" style="display:none;">
+      <div class="swap-panel-title">📌 이번 주 수업 교환 안내</div>
+      <div id="swapList"></div>
+      <div id="adminEditHint" class="admin-hint" style="display:none;"></div>
     </div>
 
     <div class="legend" id="legend"></div>
@@ -970,6 +972,7 @@ function renderTable(eff) {
           td.appendChild(badge);
           const orig = baseMap.get(key);
           td.title = "결보강 — 원래 담당: " + (orig ? TEACHERS[orig.teacherIdx] : "-");
+          if (mode === "class") td.classList.add("cell-bg-sub");
         } else if (changed) {
           const badge = document.createElement("div");
           badge.className = "badge-swap";
@@ -977,6 +980,7 @@ function renderTable(eff) {
           const orig = baseMap.get(key);
           const origLabel = orig ? (orig.subject === "창체" ? orig.subject : orig.subject + " · " + TEACHERS[orig.teacherIdx]) : "빈 시간";
           td.title = "교환됨 — 원래: " + origLabel;
+          if (mode === "class") td.classList.add("cell-bg-swap");
         }
       }
 
