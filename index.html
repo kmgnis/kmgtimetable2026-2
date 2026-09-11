@@ -75,6 +75,8 @@
   .chip.week.active { background: var(--accent); border-color: var(--accent); }
   .chip .del-x { opacity: 0.6; font-weight: 800; }
   .chip .del-x:hover { opacity: 1; }
+  .chip .move-x { opacity: 0.55; font-weight: 800; padding: 0 2px; }
+  .chip .move-x:hover { opacity: 1; }
   .chip.add-week { border-style: dashed; color: var(--muted-2); }
   .no-result { font-size: 13px; color: var(--faint); padding: 6px 2px; }
 
@@ -641,11 +643,25 @@ function renderWeekChips() {
   baseBtn.onclick = () => { selectedWeekId = null; renderAll(); };
   container.appendChild(baseBtn);
 
-  weeks.forEach(w => {
+  weeks.forEach((w, idx) => {
     const btn = document.createElement("button");
     btn.className = "chip week" + (w.id === selectedWeekId ? " active" : "");
-    btn.innerHTML = `<span>${escapeHtml(w.label)}</span>` + (adminMode ? `<span class="del-x" data-del="${w.id}">✕</span>` : "");
+    const moveLeft = adminMode && idx > 0 ? `<span class="move-x" data-move="left" data-id="${w.id}" title="왼쪽으로 이동">◀</span>` : "";
+    const moveRight = adminMode && idx < weeks.length - 1 ? `<span class="move-x" data-move="right" data-id="${w.id}" title="오른쪽으로 이동">▶</span>` : "";
+    const delX = adminMode ? `<span class="del-x" data-del="${w.id}">✕</span>` : "";
+    btn.innerHTML = moveLeft + `<span>${escapeHtml(w.label)}</span>` + moveRight + delX;
     btn.onclick = (e) => {
+      if (e.target && e.target.dataset && e.target.dataset.move) {
+        e.stopPropagation();
+        const dir = e.target.dataset.move;
+        const i = weeks.findIndex(x => x.id === w.id);
+        const j = dir === "left" ? i - 1 : i + 1;
+        if (j < 0 || j >= weeks.length) return;
+        [weeks[i], weeks[j]] = [weeks[j], weeks[i]];
+        saveData();
+        renderAll();
+        return;
+      }
       if (e.target && e.target.dataset && e.target.dataset.del) {
         e.stopPropagation();
         showModal({
